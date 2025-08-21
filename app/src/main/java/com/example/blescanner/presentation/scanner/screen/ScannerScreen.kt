@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,6 +43,8 @@ import com.example.blescanner.presentation.permission.util.PermissionUtils
 import com.example.blescanner.presentation.scanner.uiState.ScannerUiState
 import com.example.blescanner.presentation.scanner.viewModel.ScannerViewModel
 import org.koin.androidx.compose.koinViewModel
+import java.nio.charset.Charset
+import java.util.UUID
 
 @Composable
 fun ScannerScreen(
@@ -141,20 +145,27 @@ fun ScannerScreen(
         Spacer(Modifier.height(12.dp))
 
         scannerUiState.error?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
-        DevicesContent(scannerUiState)
+        DevicesContent(scannerUiState, scannerViewModel)
     }
 }
 
 @Composable
 fun DevicesContent(
     scannerUiState: ScannerUiState,
+    scannerViewModel: ScannerViewModel,
     modifier: Modifier = Modifier
 ) {
     val devices = scannerUiState.devices
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    val serviceInput = remember { mutableStateMapOf<String, String>() }
+    val charInput = remember { mutableStateMapOf<String, String>() }
+    val subscribed = remember { mutableStateMapOf<String, Boolean>() }
 
-    Column(modifier = modifier
-        .fillMaxSize()
-        .padding(16.dp)) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
         if (scannerUiState.isScanning && devices.isNotEmpty()) {
             Text("Scanning...", style = MaterialTheme.typography.titleSmall)
             Spacer(modifier = Modifier.height(8.dp))
@@ -190,10 +201,45 @@ fun DevicesContent(
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+
+                        ) {
                         items(devices, key = { it.address }) { device ->
-                            DeviceRow(device)
+                            val addr = device.address
+                            val isExpanded = expanded[addr] == true
+
+                            DeviceRow(
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = tween(500),
+                                    fadeOutSpec = tween(500),
+                                ),
+                                device = device,
+                                isExpanded = isExpanded,
+                                onToggleExpanded = {
+                                    expanded[addr] = !(expanded[addr] ?: false)
+                                },
+                                serviceText = serviceInput[addr] ?: "",
+                                charText = charInput[addr] ?: "",
+                                onServiceChange = { serviceInput[addr] = it },
+                                onCharChange = { charInput[addr] = it },
+                                isSubscribed = subscribed[addr] == true,
+                                onConnect = { scannerViewModel.connectDevice(addr) },
+                                onDisconnect = { scannerViewModel.disconnectDevice(addr) },
+                                onRead = {
+                                    val s = (serviceInput[addr] ?: "").ifBlank { return@DeviceRow }
+                                    val c = (charInput[addr] ?: "").ifBlank { return@DeviceRow }
+                                    scannerViewModel.readCharacteristic(addr, s, c)
+                                },
+                                onSubscribeToggle = {
+                                    val s = (serviceInput[addr] ?: "").ifBlank { return@DeviceRow }
+                                    val c = (charInput[addr] ?: "").ifBlank { return@DeviceRow }
+                                    val new = subscribed[addr] != true
+                                    subscribed[addr] = new
+                                    if (new) {
+                                        scannerViewModel.subscribeToCharacteristic(addr, s, c)
+                                    }
+                                }
+                            )
                         }
                     }
                 }
@@ -209,31 +255,110 @@ fun DevicesContent(
 }
 
 @Composable
-fun DeviceRow(device: BleDevice) {
-    ElevatedCard(Modifier.fillMaxWidth()) {
+fun DeviceRow(
+    modifier: Modifier = Modifier,
+    device: BleDevice,
+    isExpanded: Boolean,
+    onToggleExpanded: () -> Unit,
+    serviceText: String,
+    charText: String,
+    onServiceChange: (String) -> Unit,
+    onCharChange: (String) -> Unit,
+    isSubscribed: Boolean,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onRead: () -> Unit,
+    onSubscribeToggle: () -> Unit
+) {
+    ElevatedCard(modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            Text(device.name ?: "(Unknown)", style = MaterialTheme.typography.titleMedium)
-            Text(device.address, style = MaterialTheme.typography.bodyMedium)
-            Text("RSSI: ${device.rssi} dBm", style = MaterialTheme.typography.bodySmall)
-            device.txPower?.let {
-                Text(
-                    "TxPower: $it dBm",
-                    style = MaterialTheme.typography.bodySmall
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(device.name ?: "(Unknown)", style = MaterialTheme.typography.titleMedium)
+                    Text(device.address, style = MaterialTheme.typography.bodyMedium)
+                    Text("RSSI: ${device.rssi} dBm", style = MaterialTheme.typography.bodySmall)
+                }
+
+                // Simple connect/disconnect buttons — you can adjust by connection state
+                Column(horizontalAlignment = Alignment.End) {
+                    Button(
+                        onClick = onConnect,
+                        modifier = Modifier.height(36.dp)
+                    ) { Text("Connect") }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(
+                        onClick = onDisconnect,
+                        modifier = Modifier.height(36.dp)
+                    ) { Text("Disconnect") }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(onClick = onToggleExpanded, modifier = Modifier.height(36.dp)) {
+                        Text(if (isExpanded) "Hide" else "Details")
+                    }
+                }
             }
-            if (device.serviceUuids.isNotEmpty())
-                Text(
-                    "Services: ${device.serviceUuids.joinToString()}",
-                    style = MaterialTheme.typography.bodySmall
+
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = serviceText,
+                    onValueChange = onServiceChange,
+                    label = { Text("Service UUID (short or full)") },
+                    modifier = Modifier.fillMaxWidth()
                 )
-            if (device.manufacturerData.isNotEmpty())
-                Text(
-                    "Mfr Data: ${
-                        device.manufacturerData.map { (id, bytes) -> "0x${id.toString(16)}=${bytes.toHexString()}" }
-                            .joinToString()
-                    }",
-                    style = MaterialTheme.typography.bodySmall
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = charText,
+                    onValueChange = onCharChange,
+                    label = { Text("Characteristic UUID") },
+                    modifier = Modifier.fillMaxWidth()
                 )
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onRead) { Text("Read") }
+                    Button(onClick = onSubscribeToggle) { Text(if (isSubscribed) "Unsubscribe" else "Subscribe") }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                if (device.serviceUuids.isNotEmpty()) {
+                    Text(
+                        "Advertised services: ${device.serviceUuids.joinToString()}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (device.manufacturerData.isNotEmpty()) {
+                    Text("Manufacturer data present", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun NotificationRow(deviceAddress: String, uuid: UUID, bytes: ByteArray) {
+    val asText = try {
+        bytes.toString(Charset.forName("UTF-8"))
+    } catch (t: Throwable) {
+        null
+    }
+    val asHex = bytes.joinToString(separator = " ") { "%02X".format(it) }
+
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(deviceAddress, style = MaterialTheme.typography.bodyMedium)
+                Text(uuid.toString(), style = MaterialTheme.typography.bodySmall)
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text("Hex: $asHex", style = MaterialTheme.typography.bodySmall)
+            asText?.let {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Text: $it", style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
