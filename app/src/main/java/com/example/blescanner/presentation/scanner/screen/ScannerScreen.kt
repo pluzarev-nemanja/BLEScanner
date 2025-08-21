@@ -156,6 +156,7 @@ fun DevicesContent(
     modifier: Modifier = Modifier
 ) {
     val devices = scannerUiState.devices
+    val notifications = scannerUiState.notifications
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     val serviceInput = remember { mutableStateMapOf<String, String>() }
     val charInput = remember { mutableStateMapOf<String, String>() }
@@ -240,6 +241,16 @@ fun DevicesContent(
                                     }
                                 }
                             )
+                        }
+                        if (notifications.isNotEmpty()) {
+                            item {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text("Notifications:", style = MaterialTheme.typography.titleSmall)
+                                Spacer(modifier = Modifier.height(6.dp))
+                            }
+                            items(notifications) { note ->
+                                NotificationRow(note.deviceAddress, note.characteristicUuid, note.data)
+                            }
                         }
                     }
                 }
