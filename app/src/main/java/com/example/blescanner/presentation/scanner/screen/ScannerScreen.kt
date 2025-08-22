@@ -73,6 +73,9 @@ import com.example.blescanner.presentation.scanner.uiState.NotificationUi
 import com.example.blescanner.presentation.scanner.uiState.ScannerUiState
 import com.example.blescanner.presentation.scanner.viewModel.ScannerViewModel
 import org.koin.androidx.compose.koinViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun ScannerScreen(
@@ -389,7 +392,7 @@ fun ServicesList(
                         }
                 ) {
                     Text(
-                        text = "$ Service: ${serviceInfo.uuid}",
+                        text = "• Service: ${serviceInfo.uuid}",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -405,7 +408,7 @@ fun ServicesList(
                                     .padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
                             ) {
                                 Text(
-                                    text = "Characteristic: ${characteristic.uuid}",
+                                    text = "• Characteristic: ${characteristic.uuid}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Light
                                 )
@@ -453,12 +456,8 @@ fun ServicesList(
 
         notification?.let {
             if (showPopUpMenu)
-                CustomAlertDialog(
-                    title = it.deviceAddress,
-                    text = it.data.toString(),
-                    onConfirm = {
-                        showPopUpMenu = false
-                    },
+                NotificationDialog(
+                    notification = it,
                     onDismiss = {
                         showPopUpMenu = false
                     }
@@ -595,52 +594,110 @@ fun BleDeviceItem(
 }
 
 @Composable
-fun CustomAlertDialog(
-    modifier: Modifier = Modifier,
-    title: String,
-    text: String,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+private fun NotificationDialog(
+    notification: NotificationUi,
+    onDismiss: (() -> Unit)? = null
 ) {
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
     val scroll = rememberScrollState()
 
+
+    val formattedTs = formatTimestamp(notification.timestamp)
+    val payloadHex = notification.payloadHex()
+    val payloadUtf8 = notification.payloadUtf8()
+
+
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { onDismiss?.invoke() ?: Unit },
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(notification.deviceAddress, style = MaterialTheme.typography.titleMedium)
                 IconButton(onClick = {
+                    val text = buildString {
+                        appendLine("Device: ${notification.deviceAddress}")
+                        appendLine("Service: ${notification.serviceUuid}")
+                        appendLine("Characteristic: ${notification.characteristicUuid}")
+                        appendLine("Timestamp: $formattedTs")
+                        appendLine("RSSI: ${notification.rssi ?: "N/A"}")
+                        appendLine("Indication: ${notification.isIndication}")
+                        appendLine()
+                        appendLine("Payload (hex): $payloadHex")
+                        appendLine("Payload (utf8): ${payloadUtf8 ?: "(not valid UTF-8)"}")
+                    }
                     clipboard.setText(AnnotatedString(text))
                     Toast.makeText(ctx, "Copied to clipboard", Toast.LENGTH_SHORT).show()
                 }) {
-                    Icon(
-                        imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Copy"
-                    )
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
                 }
             }
         },
         text = {
-            Column(modifier = modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 SelectionContainer {
-                    Text(
-                        text = text,
-                        style = MaterialTheme.typography.bodyMedium,
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .verticalScroll(scroll)
                             .heightIn(max = 360.dp)
-                    )
+                    ) {
+                        Text(
+                            text = "Service: ${notification.serviceUuid}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "Characteristic: ${notification.characteristicUuid}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Timestamp: $formattedTs",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "RSSI: ${notification.rssi ?: "N/A"}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "Indication: ${notification.isIndication}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Payload (hex):",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(text = payloadHex, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Payload (utf8):",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = payloadUtf8 ?: "(not valid UTF-8)",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Close") }
+            TextButton(onClick = { onDismiss?.invoke() ?: Unit }) { Text("Close") }
         }
     )
+}
+
+private fun formatTimestamp(ts: Long): String {
+    return try {
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        sdf.format(Date(ts))
+    } catch (e: Exception) {
+        ts.toString()
+    }
 }

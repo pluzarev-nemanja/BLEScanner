@@ -103,10 +103,8 @@ class ScannerViewModel(
         viewModelScope.launch {
             observeNotificationsUseCase().catch { e ->
                 mutableState.value = mutableState.value.copy(error = e.message)
-            }.collectLatest { triple ->
-                val (addr, uuid, bytes) = triple
-                val note = NotificationUi(addr, uuid, bytes, System.currentTimeMillis())
-                mutableState.value = mutableState.value.copy(latestNotification = note)
+            }.collectLatest { notificationUi ->
+                mutableState.value = mutableState.value.copy(latestNotification = notificationUi)
             }
         }
     }
@@ -142,15 +140,15 @@ class ScannerViewModel(
                     }
 
                     is ConnectionEvent.MtuChanged -> {
-                        // optionally handle MTU change in state if needed
                     }
 
                     is ConnectionEvent.CharacteristicRead -> {
                         val note = NotificationUi(
-                            ev.address,
-                            ev.uuid,
-                            ev.value,
-                            System.currentTimeMillis()
+                            deviceAddress = ev.address,
+                            characteristicUuid = ev.uuid,
+                            data = ev.value,
+                            timestamp = System.currentTimeMillis(),
+                            isIndication = true
                         )
                         mutableState.value = mutableState.value.copy(latestNotification = note)
                     }

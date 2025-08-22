@@ -3,6 +3,7 @@ package com.example.blescanner.domain.repository
 import com.example.blescanner.data.model.BleDevice
 import com.example.blescanner.data.model.ServiceInfo
 import com.example.blescanner.domain.event.ConnectionEvent
+import com.example.blescanner.presentation.scanner.uiState.NotificationUi
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
@@ -10,7 +11,7 @@ interface ScannerRepository {
 
     val isScanning: Flow<Boolean>
     val devices: Flow<List<BleDevice>>
-    val notifications: Flow<Triple<String, UUID, ByteArray>>
+    val notifications: Flow<NotificationUi?>
     val deviceServices: Flow<Map<String, List<ServiceInfo>>>
     val connectionEvents: Flow<ConnectionEvent>
 

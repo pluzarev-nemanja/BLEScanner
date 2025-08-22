@@ -20,6 +20,7 @@ import com.example.blescanner.data.model.CharacteristicInfo
 import com.example.blescanner.data.model.ServiceInfo
 import com.example.blescanner.domain.event.ConnectionEvent
 import com.example.blescanner.domain.repository.ScannerRepository
+import com.example.blescanner.presentation.scanner.uiState.NotificationUi
 import com.example.blescanner.presentation.scanner.util.toDateTimeString
 import io.github.aakira.napier.Napier
 import kotlinx.coroutines.CoroutineScope
@@ -48,10 +49,8 @@ class ScannerRepositoryImpl(
     private val devicesMap = ConcurrentHashMap<String, BleDevice>()
     private val mutableDevices = MutableStateFlow<List<BleDevice>>(emptyList())
     override val devices: Flow<List<BleDevice>> = mutableDevices.asStateFlow()
-    private val mutableNotifications =
-        MutableSharedFlow<Triple<String, UUID, ByteArray>>(extraBufferCapacity = 128)
-    override val notifications: Flow<Triple<String, UUID, ByteArray>> =
-        mutableNotifications.asSharedFlow()
+    private val mutableNotifications = MutableStateFlow<NotificationUi?>(null)
+    override val notifications: Flow<NotificationUi?> = mutableNotifications.asStateFlow()
 
     private val mutableConnectionEvents =
         MutableSharedFlow<ConnectionEvent>(extraBufferCapacity = 64)
@@ -257,15 +256,14 @@ class ScannerRepositoryImpl(
             ) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     val value = characteristic.value ?: ByteArray(0)
-                    Napier.d("Read from ${characteristic.uuid}: ${value.size} bytes : properties: ${characteristic.properties}")
+                    val notification = NotificationUi(
+                        deviceAddress = gatt.device.address,
+                        characteristicUuid = characteristic.uuid,
+                        data = value
+                    )
+                    Napier.d("Notification from ${characteristic.uuid} (${gatt.device.address}): ${value.size} bytes")
                     appScope.launch {
-                        mutableNotifications.emit(
-                            Triple(
-                                address,
-                                characteristic.uuid,
-                                value
-                            )
-                        )
+                        mutableNotifications.value = notification
                     }
                     appScope.launch {
                         mutableConnectionEvents.emit(
@@ -295,15 +293,14 @@ class ScannerRepositoryImpl(
                 characteristic: BluetoothGattCharacteristic
             ) {
                 val value = characteristic.value ?: ByteArray(0)
-                Napier.d("Notification from ${characteristic.uuid} (${address}): ${value.size} bytes")
+                val notification = NotificationUi(
+                    deviceAddress = gatt.device.address,
+                    characteristicUuid = characteristic.uuid,
+                    data = value
+                )
+                Napier.d("Notification from ${characteristic.uuid} (${gatt.device.address}): ${value.size} bytes")
                 appScope.launch {
-                    mutableNotifications.emit(
-                        Triple(
-                            address,
-                            characteristic.uuid,
-                            value
-                        )
-                    )
+                    mutableNotifications.value = notification
                 }
             }
 
