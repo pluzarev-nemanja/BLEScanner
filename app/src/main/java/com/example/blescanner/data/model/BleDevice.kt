@@ -6,7 +6,7 @@ data class BleDevice(
     val address: String,
     val name: String?,
     val rssi: Int,
-    val lastSeen: Long,
+    val lastSeen: String,
     val serviceUuids: List<UUID> = emptyList(),
     val manufacturerData: Map<Int, ByteArray> = emptyMap(),
     val serviceData: Map<UUID, ByteArray> = emptyMap(),

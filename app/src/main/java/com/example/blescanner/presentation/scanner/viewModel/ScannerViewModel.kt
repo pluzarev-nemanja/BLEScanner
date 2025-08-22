@@ -7,6 +7,7 @@ import com.example.blescanner.domain.event.ConnectionEvent
 import com.example.blescanner.domain.useCase.ConnectBleDeviceUseCase
 import com.example.blescanner.domain.useCase.DisconnectDeviceUseCase
 import com.example.blescanner.domain.useCase.ObserveConnectionEventsUseCase
+import com.example.blescanner.domain.useCase.ObserveDeviceServicesUseCase
 import com.example.blescanner.domain.useCase.ObserveDevicesUseCase
 import com.example.blescanner.domain.useCase.ObserveNotificationsUseCase
 import com.example.blescanner.domain.useCase.ObserveScanStateUseCase
@@ -19,11 +20,15 @@ import com.example.blescanner.domain.useCase.UnsubscribeCharacteristicUseCase
 import com.example.blescanner.presentation.scanner.uiState.ConnectionState
 import com.example.blescanner.presentation.scanner.uiState.NotificationUi
 import com.example.blescanner.presentation.scanner.uiState.ScannerUiState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -34,6 +39,7 @@ class ScannerViewModel(
     private val observeDevicesUseCase: ObserveDevicesUseCase,
     private val connectDeviceUseCase: ConnectBleDeviceUseCase,
     private val disconnectDeviceUseCase: DisconnectDeviceUseCase,
+    private val observeDeviceServicesUseCase: ObserveDeviceServicesUseCase,
     private val readCharacteristicUseCase: ReadCharacteristicUseCase,
     private val subscribeToCharacteristicUseCase: SubscribeToCharacteristicUseCase,
     private val unsubscribeCharacteristicUseCase: UnsubscribeCharacteristicUseCase,
@@ -47,14 +53,30 @@ class ScannerViewModel(
 
     private val connectionsMap = LinkedHashMap<String, ConnectionState>()
     private val servicesMap = LinkedHashMap<String, List<ServiceInfo>>()
-    private val notificationsBuffer = ArrayDeque<NotificationUi>()
-    private val maxNotifications = 50
+    private val filterTextFlow = MutableStateFlow("")
+    private var filterObserverJob: Job? = null
+    private var currentObserverFilters: List<String> = emptyList()
 
     init {
         observeScanFlag()
         observeDevices()
         observeNotifications()
         observeConnectionEvents()
+        observeDeviceServices()
+    }
+
+    fun onFilterTextChanged(text: String) {
+        filterTextFlow.value = text
+    }
+
+    private fun observeDeviceServices() {
+        viewModelScope.launch {
+            observeDeviceServicesUseCase().catch { e ->
+                mutableState.value = mutableState.value.copy(error = e.message)
+            }.collectLatest { services ->
+                mutableState.value = mutableState.value.copy(services = services)
+            }
+        }
     }
 
     private fun observeScanFlag() {
@@ -84,13 +106,7 @@ class ScannerViewModel(
             }.collectLatest { triple ->
                 val (addr, uuid, bytes) = triple
                 val note = NotificationUi(addr, uuid, bytes, System.currentTimeMillis())
-
-                synchronized(notificationsBuffer) {
-                    notificationsBuffer.addLast(note)
-                    while (notificationsBuffer.size > maxNotifications) notificationsBuffer.removeFirst()
-                }
-                mutableState.value =
-                    mutableState.value.copy(notifications = notificationsBuffer.toList())
+                mutableState.value = mutableState.value.copy(latestNotification = note)
             }
         }
     }
@@ -126,6 +142,7 @@ class ScannerViewModel(
                     }
 
                     is ConnectionEvent.MtuChanged -> {
+                        // optionally handle MTU change in state if needed
                     }
 
                     is ConnectionEvent.CharacteristicRead -> {
@@ -135,12 +152,7 @@ class ScannerViewModel(
                             ev.value,
                             System.currentTimeMillis()
                         )
-                        synchronized(notificationsBuffer) {
-                            notificationsBuffer.addLast(note)
-                            while (notificationsBuffer.size > maxNotifications) notificationsBuffer.removeFirst()
-                        }
-                        mutableState.value =
-                            mutableState.value.copy(notifications = notificationsBuffer.toList())
+                        mutableState.value = mutableState.value.copy(latestNotification = note)
                     }
 
                     is ConnectionEvent.CharacteristicReadFailed -> {
@@ -163,6 +175,38 @@ class ScannerViewModel(
         viewModelScope.launch {
             try {
                 startScanUseCase(filters)
+                mutableState.value = mutableState.value.copy(isScanning = true)
+                if (filterObserverJob?.isActive != true) {
+                    currentObserverFilters = filters
+                    filterObserverJob = viewModelScope.launch {
+                        filterTextFlow
+                            .debounce(500L)
+                            .map { raw ->
+                                raw.split(",")
+                                    .map { it.trim() }
+                                    .filter { it.isNotEmpty() }
+                            }
+                            .distinctUntilChanged()
+                            .collectLatest { newFilters ->
+                                if (!mutableState.value.isScanning) return@collectLatest
+                                if (newFilters == currentObserverFilters) return@collectLatest
+
+                                currentObserverFilters = newFilters
+                                try {
+                                    stopScanUseCase()
+                                } catch (t: Throwable) {
+                                    mutableState.value = mutableState.value.copy(error = t.message)
+                                }
+                                try {
+                                    startScanUseCase(newFilters)
+                                } catch (t: Throwable) {
+                                    mutableState.value = mutableState.value.copy(error = t.message)
+                                }
+                            }
+                    }
+                } else {
+                    currentObserverFilters - filters
+                }
             } catch (t: Throwable) {
                 mutableState.value = mutableState.value.copy(error = t.message)
             }
@@ -175,6 +219,11 @@ class ScannerViewModel(
                 stopScanUseCase()
             } catch (t: Throwable) {
                 mutableState.value = mutableState.value.copy(error = t.message)
+            } finally {
+                filterObserverJob?.cancel()
+                filterObserverJob = null
+                currentObserverFilters = emptyList()
+                mutableState.value = mutableState.value.copy(isScanning = false)
             }
         }
     }
@@ -247,12 +296,16 @@ class ScannerViewModel(
         mutableState.value = mutableState.value.copy(error = null)
     }
 
-    fun String.toUuid(): UUID? {
+    private fun String.toUuid(): UUID? {
         val cleaned = removePrefix("0x").padStart(4, '0')
         return try {
             UUID.fromString("$cleaned-0000-1000-8000-00805f9b34fb")
         } catch (e: Exception) {
-            try { UUID.fromString(this) } catch (_: Exception) { null }
+            try {
+                UUID.fromString(this)
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 }

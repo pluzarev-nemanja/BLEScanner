@@ -4,5 +4,5 @@ import java.util.UUID
 
 data class ServiceInfo(
     val uuid: UUID,
-    val characteristics: List<UUID>
+    val characteristics: List<CharacteristicInfo>
 )

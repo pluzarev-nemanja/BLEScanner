@@ -8,6 +8,6 @@ data class ScannerUiState(
     val devices: List<BleDevice> = emptyList(),
     val connections: Map<String, ConnectionState> = emptyMap(),
     val services: Map<String, List<ServiceInfo>> = emptyMap(),
-    val notifications: List<NotificationUi> = emptyList(),
+    val latestNotification: NotificationUi? = null,
     val error: String? = null
 )

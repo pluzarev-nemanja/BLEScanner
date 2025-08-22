@@ -16,9 +16,11 @@ import android.content.Context
 import android.os.ParcelUuid
 import androidx.core.util.size
 import com.example.blescanner.data.model.BleDevice
+import com.example.blescanner.data.model.CharacteristicInfo
 import com.example.blescanner.data.model.ServiceInfo
 import com.example.blescanner.domain.event.ConnectionEvent
 import com.example.blescanner.domain.repository.ScannerRepository
+import com.example.blescanner.presentation.scanner.util.toDateTimeString
 import io.github.aakira.napier.Napier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,7 +53,8 @@ class ScannerRepositoryImpl(
     override val notifications: Flow<Triple<String, UUID, ByteArray>> =
         mutableNotifications.asSharedFlow()
 
-    private val mutableConnectionEvents = MutableSharedFlow<ConnectionEvent>(extraBufferCapacity = 64)
+    private val mutableConnectionEvents =
+        MutableSharedFlow<ConnectionEvent>(extraBufferCapacity = 64)
     override val connectionEvents: Flow<ConnectionEvent> = mutableConnectionEvents.asSharedFlow()
     private val servicesMap = ConcurrentHashMap<String, List<ServiceInfo>>()
     private val mutableDeviceServices = MutableStateFlow<Map<String, List<ServiceInfo>>>(emptyMap())
@@ -195,10 +198,19 @@ class ScannerRepositoryImpl(
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     val services = gatt.services.map { svc ->
                         Napier.d("Service UUID: ${svc.uuid}")
-                        ServiceInfo(svc.uuid, svc.characteristics.map {
-                            Napier.d("Characteristic UUID: ${it.uuid}")
-                            it.uuid
-                        })
+                        ServiceInfo(
+                            uuid = svc.uuid,
+                            characteristics = svc.characteristics.map { char ->
+                                Napier.d("Characteristic UUID: ${char.uuid}, props=${char.properties}")
+                                CharacteristicInfo(
+                                    uuid = char.uuid,
+                                    properties = char.properties,
+                                    canRead = (char.properties and BluetoothGattCharacteristic.PROPERTY_READ) != 0,
+                                    canNotify = (char.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0,
+                                    canWrite = (char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
+                                )
+                            }
+                        )
                     }
                     servicesMap[address] = services
                     mutableDeviceServices.value = servicesMap.toMap()
@@ -284,7 +296,15 @@ class ScannerRepositoryImpl(
             ) {
                 val value = characteristic.value ?: ByteArray(0)
                 Napier.d("Notification from ${characteristic.uuid} (${address}): ${value.size} bytes")
-                appScope.launch { mutableNotifications.emit(Triple(address, characteristic.uuid, value)) }
+                appScope.launch {
+                    mutableNotifications.emit(
+                        Triple(
+                            address,
+                            characteristic.uuid,
+                            value
+                        )
+                    )
+                }
             }
 
             override fun onCharacteristicWrite(
@@ -319,7 +339,14 @@ class ScannerRepositoryImpl(
             true
         } catch (t: Throwable) {
             Napier.e(t) { "connectGatt failed for $address" }
-            appScope.launch { mutableConnectionEvents.emit(ConnectionEvent.ConnectFailed(address, t)) }
+            appScope.launch {
+                mutableConnectionEvents.emit(
+                    ConnectionEvent.ConnectFailed(
+                        address,
+                        t
+                    )
+                )
+            }
             false
         }
     }
@@ -342,7 +369,7 @@ class ScannerRepositoryImpl(
             appScope.launch {
                 mutableConnectionEvents.emit(
                     ConnectionEvent.Disconnected(
-                        address, /*status*/
+                        address,
                         -1
                     )
                 )
@@ -462,7 +489,7 @@ class ScannerRepositoryImpl(
 
     // ---------- utilities & scan result handling ----------
     private fun handleResult(result: ScanResult?) {
-        result?.rssi?.let { if (it < -90) return } // slightly more permissive default
+        result?.rssi?.let { if (it < -70) return }
         val device = result?.device ?: return
         val record = result.scanRecord
         val name = record?.deviceName ?: device.name
@@ -494,7 +521,7 @@ class ScannerRepositoryImpl(
             address = device.address,
             name = name,
             rssi = result.rssi,
-            lastSeen = System.currentTimeMillis(),
+            lastSeen = System.currentTimeMillis().toDateTimeString(),
             serviceUuids = serviceUuids,
             manufacturerData = manufacturerData,
             serviceData = serviceData,
@@ -513,7 +540,8 @@ class ScannerRepositoryImpl(
             devicesMap[model.address] = model
             shouldEmit = true
         } else {
-            devicesMap[model.address] = existing.copy(lastSeen = System.currentTimeMillis())
+            devicesMap[model.address] =
+                existing.copy(lastSeen = System.currentTimeMillis().toDateTimeString())
         }
 
         if (shouldEmit) {
