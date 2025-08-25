@@ -17,9 +17,11 @@ import com.example.blescanner.domain.useCase.StartScanUseCase
 import com.example.blescanner.domain.useCase.StopScanUseCase
 import com.example.blescanner.domain.useCase.SubscribeToCharacteristicUseCase
 import com.example.blescanner.domain.useCase.UnsubscribeCharacteristicUseCase
+import com.example.blescanner.domain.useCase.WriteCharacteristicUseCase
 import com.example.blescanner.presentation.scanner.uiState.ConnectionState
 import com.example.blescanner.presentation.scanner.uiState.NotificationUi
 import com.example.blescanner.presentation.scanner.uiState.ScannerUiState
+import io.github.aakira.napier.Napier
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +41,7 @@ class ScannerViewModel(
     private val observeDevicesUseCase: ObserveDevicesUseCase,
     private val connectDeviceUseCase: ConnectBleDeviceUseCase,
     private val disconnectDeviceUseCase: DisconnectDeviceUseCase,
+    private val writeCharacteristicUseCase: WriteCharacteristicUseCase,
     private val observeDeviceServicesUseCase: ObserveDeviceServicesUseCase,
     private val readCharacteristicUseCase: ReadCharacteristicUseCase,
     private val subscribeToCharacteristicUseCase: SubscribeToCharacteristicUseCase,
@@ -292,6 +295,28 @@ class ScannerViewModel(
 
     fun clearError() {
         mutableState.value = mutableState.value.copy(error = null)
+    }
+
+    fun writeToCharacteristic(
+        deviceAddress: String,
+        serviceUuid: UUID,
+        charUuid: UUID,
+        value: ByteArray,
+        writeType: Int = android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                writeCharacteristicUseCase(
+                    deviceAddress = deviceAddress,
+                    serviceUuid = serviceUuid,
+                    charUuid = charUuid,
+                    value = value,
+                    writeType = writeType
+                )
+            }.onFailure {
+                Napier.d(it.message.toString())
+            }
+        }
     }
 
     private fun String.toUuid(): UUID? {

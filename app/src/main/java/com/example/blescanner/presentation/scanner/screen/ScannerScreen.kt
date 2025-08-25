@@ -6,8 +6,13 @@ import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.with
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -39,10 +44,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FabPosition
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -66,17 +77,23 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.blescanner.R
 import com.example.blescanner.data.model.BleDevice
+import com.example.blescanner.data.model.CharacteristicInfo
 import com.example.blescanner.data.model.ServiceInfo
 import com.example.blescanner.presentation.permission.util.PermissionUtils
 import com.example.blescanner.presentation.scanner.uiState.ConnectionState
 import com.example.blescanner.presentation.scanner.uiState.NotificationUi
 import com.example.blescanner.presentation.scanner.uiState.ScannerUiState
+import com.example.blescanner.presentation.scanner.util.toByteArrayFromInput
+import com.example.blescanner.presentation.scanner.util.toDateTimeString
 import com.example.blescanner.presentation.scanner.viewModel.ScannerViewModel
+import com.example.blescanner.ui.theme.ChipBlue
+import com.example.blescanner.ui.theme.ChipGreen
+import com.example.blescanner.ui.theme.ChipOrange
+import com.example.blescanner.ui.theme.ChipRed
 import org.koin.androidx.compose.koinViewModel
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.UUID
 
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun ScannerScreen(
     modifier: Modifier = Modifier,
@@ -117,70 +134,104 @@ fun ScannerScreen(
         }
     }
 
-    Column(
+    Scaffold(
         modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-
-            OutlinedTextField(
-                value = filter,
-                onValueChange = {
-                    filter = it
-                    scannerViewModel.onFilterTextChanged(it)
+            .fillMaxSize(),
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    Toast.makeText(
+                        context,
+                        "Found: ${scannerUiState.devices.size} devices",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 },
-                label = { Text("Filter by name") },
-                modifier = Modifier.weight(1f)
-            )
-
-            if (scannerUiState.isScanning) {
-                Button(
-                    onClick = { scannerViewModel.stopScan() }
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Stop,
-                        contentDescription = "Stop"
-                    )
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp),
+                content = {
+                    Text("Devices: ${scannerUiState.devices.size}")
                 }
-            } else {
+            )
+        },
+        floatingActionButtonPosition = FabPosition.End
+    ) { paddingValues ->
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+
+                OutlinedTextField(
+                    value = filter,
+                    onValueChange = {
+                        filter = it
+                        scannerViewModel.onFilterTextChanged(it)
+                    },
+                    label = { Text("Filter by name") },
+                    modifier = Modifier.weight(1f)
+                )
                 Button(
                     onClick = {
-                        val filters = filter.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                        if (scannerUiState.isScanning) {
+                            scannerViewModel.stopScan()
+                        } else {
+                            val filters = filter.split(",").map { it.trim() }
+                                .filter { it.isNotEmpty() }
 
-                        if (!allPermissionsGranted()) {
-                            pendingStart = true
-                            pendingFilters = filters
-                            permsLauncher.launch(permissionsArray)
-                            return@Button
-                        }
-                        val adapter = BluetoothAdapter.getDefaultAdapter()
-                        if (adapter == null) {
-                            return@Button
-                        }
-                        if (!adapter.isEnabled) {
-                            pendingStart = true
-                            pendingFilters = filters
-                            enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
-                            return@Button
-                        }
+                            if (!allPermissionsGranted()) {
+                                pendingStart = true
+                                pendingFilters = filters
+                                permsLauncher.launch(permissionsArray)
+                                return@Button
+                            }
+                            val adapter =
+                                BluetoothAdapter.getDefaultAdapter() ?: return@Button
+                            if (!adapter.isEnabled) {
+                                pendingStart = true
+                                pendingFilters = filters
+                                enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+                                return@Button
+                            }
 
-                        scannerViewModel.startScan(filters)
+                            scannerViewModel.startScan(filters)
+                        }
                     }
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.PlayArrow,
-                        contentDescription = "Play"
-                    )
+                    AnimatedContent(
+                        targetState = scannerUiState.isScanning,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(300)) with fadeOut(
+                                animationSpec = tween(
+                                    300
+                                )
+                            )
+                        }
+                    ) { isScanning ->
+                        if (isScanning) {
+                            Icon(
+                                imageVector = Icons.Filled.Stop,
+                                contentDescription = "Stop"
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.PlayArrow,
+                                contentDescription = "Play"
+                            )
+                        }
+                    }
                 }
             }
+            Spacer(Modifier.height(12.dp))
+            DevicesContent(scannerUiState, scannerViewModel)
         }
-        Spacer(Modifier.height(12.dp))
-        DevicesContent(scannerUiState, scannerViewModel)
     }
 }
 
@@ -199,17 +250,11 @@ fun DevicesContent(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        if (scannerUiState.isScanning && devices.isNotEmpty()) {
-            Text("Scanning...", style = MaterialTheme.typography.titleSmall)
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
         ) {
-
             when {
                 scannerUiState.isScanning && devices.isEmpty() -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -285,6 +330,7 @@ fun DevicesContent(
                                 },
                                 services = scannerUiState.services,
                                 notification = scannerUiState.latestNotification,
+                                scannerViewModel = scannerViewModel,
                                 subscribedCharacteristics = emptySet()
                             )
                         }
@@ -292,15 +338,6 @@ fun DevicesContent(
                 }
             }
         }
-        Text(
-            text = "Devices: ${devices.size}",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.primary)
-                .padding(top = 8.dp, bottom = 8.dp, start = 8.dp),
-            color = MaterialTheme.colorScheme.onPrimary
-        )
     }
 }
 
@@ -313,6 +350,7 @@ fun DeviceRow(
     services: Map<String, List<ServiceInfo>>,
     subscribedCharacteristics: Set<String>,
     notification: NotificationUi?,
+    scannerViewModel: ScannerViewModel,
     onRead: (String, String) -> Unit,
     onSubscribeToggle: (String, String, Boolean) -> Unit,
     onToggleConnection: () -> Unit,
@@ -323,19 +361,21 @@ fun DeviceRow(
         animationSpec = tween(durationMillis = 300)
     )
 
-    ElevatedCard(modifier.fillMaxWidth()) {
+    ElevatedCard(
+        modifier
+            .fillMaxWidth()
+    ) {
         Column(Modifier.padding(12.dp)) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 BleDeviceItem(
                     modifier = Modifier.weight(1f),
                     device = device
                 )
                 Controller(
-                    modifier = Modifier,
+                    modifier = Modifier.fillMaxHeight(),
                     connectionState,
                     onToggleConnection,
                     onToggleExpanded,
@@ -351,7 +391,16 @@ fun DeviceRow(
                     onRead = onRead,
                     notification = notification,
                     onSubscribeToggle = onSubscribeToggle,
-                    subscribedCharacteristics = subscribedCharacteristics
+                    subscribedCharacteristics = subscribedCharacteristics,
+                    deviceAddress = device.address,
+                    onWrite = { deviceAddress, serviceUuid, charUuid, value ->
+                        scannerViewModel.writeToCharacteristic(
+                            deviceAddress,
+                            serviceUuid,
+                            charUuid,
+                            value
+                        )
+                    }
                 )
             }
         }
@@ -364,11 +413,14 @@ fun ServicesList(
     servicesMap: Map<String, List<ServiceInfo>>,
     onRead: (String, String) -> Unit,
     notification: NotificationUi?,
+    deviceAddress: String,
     onSubscribeToggle: (String, String, Boolean) -> Unit,
+    onWrite: (String, UUID, UUID, ByteArray) -> Unit,
     subscribedCharacteristics: Set<String>
 ) {
     val expandedMap = remember { mutableStateMapOf<String, Boolean>() }
     var showPopUpMenu by remember { mutableStateOf(false) }
+    var writeDialogData by remember { mutableStateOf<Triple<String, UUID, UUID>?>(null) }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -391,11 +443,20 @@ fun ServicesList(
                             expandedMap[serviceInfo.uuid.toString()] = !expanded
                         }
                 ) {
-                    Text(
-                        text = "• Service: ${serviceInfo.uuid}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = "• Service: ",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = serviceInfo.uuid.toString(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                     if (expanded) {
                         Spacer(Modifier.height(6.dp))
                         serviceInfo.characteristics.forEach { characteristic ->
@@ -407,18 +468,22 @@ fun ServicesList(
                                     .fillMaxWidth()
                                     .padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
                             ) {
-                                Text(
-                                    text = "• Characteristic: ${characteristic.uuid}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Light
-                                )
-                                Text(
-                                    text = "Props=${characteristic.properties}, " +
-                                            "READ=${characteristic.canRead}, " +
-                                            "NOTIFY=${characteristic.canNotify}, " +
-                                            "WRITE=${characteristic.canWrite}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.Start
+                                ) {
+                                    Text(
+                                        text = "• Characteristic: ",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Light
+                                    )
+                                    Text(
+                                        text = characteristic.uuid.toString(),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                CharacteristicPropertiesRow(characteristic)
 
                                 Spacer(Modifier.height(4.dp))
 
@@ -432,6 +497,17 @@ fun ServicesList(
                                             showPopUpMenu = true
                                         }) {
                                             Text("Read")
+                                        }
+                                    }
+                                    if (characteristic.canWrite) {
+                                        Button(onClick = {
+                                            writeDialogData = Triple(
+                                                deviceAddress,
+                                                serviceInfo.uuid,
+                                                characteristic.uuid
+                                            )
+                                        }) {
+                                            Text("Write")
                                         }
                                     }
                                     if (characteristic.canNotify) {
@@ -454,6 +530,16 @@ fun ServicesList(
             }
         }
 
+        writeDialogData?.let { (deviceAddress, serviceUuid, charUuid) ->
+            WriteCharacteristicPopUp(
+                onWrite = { bytes ->
+                    onWrite(deviceAddress, serviceUuid, charUuid, bytes)
+                },
+                onDismiss = {
+                    writeDialogData = null
+                }
+            )
+        }
         notification?.let {
             if (showPopUpMenu)
                 NotificationDialog(
@@ -463,6 +549,80 @@ fun ServicesList(
                     }
                 )
         }
+    }
+}
+
+@Composable
+fun WriteCharacteristicPopUp(
+    onDismiss: () -> Unit,
+    onWrite: (ByteArray) -> Unit
+) {
+    var textToWrite by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Write to Characteristic") },
+        text = {
+            Column {
+                Text(
+                    "Enter value in HEX (e.g., 01 0A FF) or UTF-8 text:",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedTextField(
+                    value = textToWrite,
+                    onValueChange = { textToWrite = it },
+                    placeholder = { Text("e.g., 01 0A FF") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onWrite(textToWrite.toByteArrayFromInput())
+                onDismiss()
+            }) {
+                Text("Send")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun CharacteristicPropertiesRow(characteristic: CharacteristicInfo) {
+    Row(
+        modifier = Modifier.padding(top = 10.dp, bottom = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        ChipItem("Props:${characteristic.properties}", ChipGreen)
+        if (characteristic.canRead) {
+            ChipItem("READ", ChipOrange)
+        }
+        if (characteristic.canNotify) {
+            ChipItem("NOTIFY", ChipRed)
+        }
+        if (characteristic.canWrite) {
+            ChipItem("WRITE", ChipBlue)
+        }
+    }
+}
+
+@Composable
+fun ChipItem(text: String, backgroundColor: Color) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = backgroundColor,
+        shadowElevation = 0.dp
+    ) {
+        Text(
+            text = text,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
     }
 }
 
@@ -479,9 +639,8 @@ private fun Controller(
         mutableStateOf(false)
     }
     Column(
-        modifier = modifier.fillMaxHeight(),
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.SpaceBetween
+        modifier = modifier,
+        horizontalAlignment = Alignment.End
     ) {
         when (connectionState) {
             ConnectionState.CONNECTING -> {
@@ -518,8 +677,7 @@ private fun Controller(
                 ) { Text("Connect") }
             }
         }
-
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(15.dp))
         if (showDescriptionArrow) {
             IconButton(
                 onClick = onToggleExpanded,
@@ -547,7 +705,7 @@ fun BleDeviceItem(
             .padding(12.dp)
     ) {
         Text(
-            text = device.name ?: "(Unknown)",
+            text = device.displayName,
             style = MaterialTheme.typography.titleMedium
         )
         Text(
@@ -603,7 +761,7 @@ private fun NotificationDialog(
     val scroll = rememberScrollState()
 
 
-    val formattedTs = formatTimestamp(notification.timestamp)
+    val formattedTs = notification.timestamp.toDateTimeString()
     val payloadHex = notification.payloadHex()
     val payloadUtf8 = notification.payloadUtf8()
 
@@ -691,13 +849,4 @@ private fun NotificationDialog(
             TextButton(onClick = { onDismiss?.invoke() ?: Unit }) { Text("Close") }
         }
     )
-}
-
-private fun formatTimestamp(ts: Long): String {
-    return try {
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        sdf.format(Date(ts))
-    } catch (e: Exception) {
-        ts.toString()
-    }
 }
