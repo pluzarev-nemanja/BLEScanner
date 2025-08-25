@@ -15,9 +15,9 @@ An Android app to scan, connect, and interact with Bluetooth Low Energy (BLE) de
 
 ---
 
-## Screenshots
+## Video Showcase
 
-*Add screenshots here to showcase scanning, connected device, and characteristic UI.*
+![BLE Scanner Demo](assets/demo.mp4)
 
 ---
 
@@ -35,7 +35,7 @@ An Android app to scan, connect, and interact with Bluetooth Low Energy (BLE) de
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/ble-scanner-app.git
+git clone https://github.com/pluzarev-nemanja/BLEScanner.git
 ```
 
 2. Open in Android Studio and build the project
