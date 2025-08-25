@@ -17,7 +17,12 @@ An Android app to scan, connect, and interact with Bluetooth Low Energy (BLE) de
 
 ## Video Showcase
 
-![BLE Scanner Demo](assets/demoGif.gif)
+<table>
+  <tr>
+    <td><img src="assets/demoGif.gif" width="218" alt=""/></td>
+    <td><img src="assets/demoGif2.gif" width="218" alt=""/></td>
+  </tr>
+</table>
 ---
 
 ## Architecture
